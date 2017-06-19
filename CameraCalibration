@@ -1,0 +1,164 @@
+// Includes OpenCV
+#include <opencv2/core/mat.hpp>
+#include <opencv2/opencv.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/core/utility.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/objdetect/objdetect.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/features2d/features2d.hpp>
+#include <opencv2/calib3d/calib3d.hpp>
+#include <opencv2/flann/flann.hpp>
+
+// Includes C++
+#include <vector>
+#include <iostream>
+
+// Namespaces
+using namespace std;
+using namespace cv;
+
+int main(int argc, char *argv[])
+{
+    int numBoards = 0; // Number of boards you want to capture (20)
+    int numCornersHor; // Number of internal corners horizontally (9)
+    int numCornersVer; // Number of internal corners vertically (5)
+
+    // Get the values:
+    cout << "Number of internal corners horizontally: "<< endl;
+    cin >> numCornersHor;
+
+    cout << "Number of internal corners vertically: " << endl;
+    cin >> numCornersVer;
+
+    cout << "Number of boards you want to capture: " << endl;
+    cin >> numBoards;
+
+    int numSquares = numCornersHor * numCornersVer; // Number of squares
+    Size board_sz = Size(numCornersHor, numCornersVer); // Board size
+
+    // Camera capture
+    //String calibrationPath = "..\\camera_cal\\calibration1.jpg";
+    VideoCapture capture = VideoCapture(0); // 0=camera or string path
+
+    // List of objectspoints and imagepoints
+    vector<vector<Point3f>> object_points; // physical position of the corners (in 3D space)
+    vector<vector<Point2f>> image_points; // location of the corners on in the image (in 2D)
+    /*
+     * And because we'll use a chessboard, these points have a definite relations
+     * between them (they lie on straight lines and on squares). So the
+     * "expected" - "actual" relation can be used to correct the distortions in the image.
+     */
+
+
+    // List of corners
+    vector<Point2f> corners;
+    int successes=0; // track of successfully capturing a chessboard and saving it into the lists we declared above
+
+    // Create the images and get the first snapshot
+    Mat image;
+    Mat gray_image;
+    capture >> image;
+
+    // This creates a list of coordinates and setting up the units of calibration
+    vector<Point3f> obj;
+    for(int i = 0; i < numSquares; i++)
+        obj.push_back(Point3f(i/numCornersHor, i%numCornersHor, 0.0f));
+
+    /* Example:
+     * Suppose the squares in your chessboards were 30mm in size, and you
+     * supplied these coordinates as (0,0,0), (0, 30, 0), etc, you'd get all
+     * unknowns in millimeters.
+     */
+
+    while(successes < numBoards)
+    {
+        // Convert the image into a grayscale image
+        cvtColor(image, gray_image, CV_BGR2GRAY);
+
+        bool found = findChessboardCorners(image, board_sz, corners, CV_CALIB_CB_ADAPTIVE_THRESH | CV_CALIB_CB_FILTER_QUADS);
+
+        if(found)
+        {
+            cornerSubPix(gray_image, corners, Size(11, 11), Size(-1, -1), TermCriteria(CV_TERMCRIT_EPS | CV_TERMCRIT_ITER, 30, 0.1));
+            drawChessboardCorners(gray_image, board_sz, corners, found);
+        }
+
+        /*
+         * The findChessboardCorners looks for board_sz sized corners
+         * in image. If it detects such a pattern, their pixel locations
+         * are stored in corners and found becomes non-zero. The flags
+         * in the last parameter are used to improve the chances of
+         * detecting the corners
+         *
+         * If corners are detected, they are further refined.
+         * Subpixel corners are calculated from the grayscale image.
+         * This is an iterative process, so you need to provide a
+         * termination criteria (number of iterations, amount of error
+         * allowed, etc).
+         *
+         * Also, if corners are detected, they're drawn onto the
+         * screen using the handy _drawChessboardCorners _function
+         */
+
+        // Update the display the images and grab another frame
+        imshow("Raw Image", image);
+        imshow("Gray Image", gray_image);
+
+        capture >> image;
+        int key = waitKey(1);
+
+        /* If escape is pressed, we quit. If corners were found
+         * and space bar was pressed, we store the results into
+         * the lists. And if we reach the required number of snaps,
+         *  we break the while loop too
+         */
+
+        if(key == 27)
+            return 0;
+
+        if(key == ' ' && found != 0)
+        {
+            image_points.push_back(corners);
+            object_points.push_back(obj);
+
+            cout << "Snap stored!" << endl;
+
+            successes++;
+
+            if(successes >= numBoards)
+                break;
+        }
+
+    } // while
+
+    // Getting ready to do the calibration
+    Mat intrinsic = Mat(3, 3, CV_32FC1);
+    Mat distCoeffs;
+    vector<Mat> rvecs;
+    vector<Mat> tvecs;
+
+    // Normally, the camera's aspect ratios is 1, if not, change it
+    intrinsic.ptr<float>(0)[0] = 1;
+    intrinsic.ptr<float>(1)[1] = 1;
+    // Elements (0,0) and (1,1) are the focal lengths along the X and Y axis
+
+    // Calibration
+    calibrateCamera(object_points, image_points, image.size(), intrinsic, distCoeffs, rvecs, tvecs);
+
+    // Now that we have the distortion coefficients, we can undistort the images
+    Mat imageUndistored;
+
+    while(true)
+    {
+        capture >> image;
+        undistort(image, imageUndistored, intrinsic, distCoeffs);
+
+        imshow("Raw Image", image);
+        imshow("Undistored Image", imageUndistored);
+        waitKey(1);
+    }
+
+    capture.release();
+    return 0;
+}
